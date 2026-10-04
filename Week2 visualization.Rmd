@@ -1,0 +1,348 @@
+---
+title: "Week 2 Task: Data Visualization and Insight Communication using R"
+subtitle: "Dataset: Titanic Passenger Data (cleaned in Week 1; 891 passengers)"
+author: "[Your Name] | [Internship / Organisation] | [Date]"
+output:
+  word_document:
+    fig_width: 6.5
+    fig_height: 4
+    fig_caption: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      comment = "#>", dpi = 200)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(lattice)
+
+# One consistent colour language for the whole report (colour-blind friendly)
+col_no    <- "#D55E00"   # did not survive
+col_yes   <- "#0072B2"   # survived
+pal_class <- c("1st" = "#0072B2", "2nd" = "#56B4E9", "3rd" = "#E69F00")
+pal_sex   <- c(female = "#CC79A7", male = "#0072B2")
+
+theme_set(
+  theme_minimal(base_size = 11) +
+    theme(plot.title    = element_text(face = "bold", size = 11.5),
+          plot.subtitle = element_text(colour = "grey35"),
+          legend.position = "bottom",
+          panel.grid.minor = element_blank())
+)
+```
+
+# 1. Plain-Language Summary
+
+This report uses charts to answer one question: **who was more likely to survive the Titanic disaster, and why?** Each chart below is followed by a short explanation of why that chart type was chosen and what it shows, written so that a non-technical reader can follow the story.
+
+The main findings, each backed by a chart later in the report:
+
+1. **Who you were mattered a great deal.** Women survived far more often than men, and boys far more often than adult men (Visualizations 1 and 4).
+2. **Ticket class mattered, too.** First-class passengers survived at roughly 63%, against about 24% in third class, and the pattern holds across age groups (Visualizations 5, 6 and 10).
+3. **Some patterns are partly "hidden" by other factors.** Passengers who boarded at Cherbourg survived more often, but they were also much more likely to be in first class, so the port is only part of the story (Visualization 7).
+4. **Missing information was itself informative.** Passengers with no recorded cabin survived far less often than those with one (Visualization 8).
+
+# 2. Data Overview and Key Variables
+
+The data is the cleaned Titanic dataset produced in Week 1 (missing values handled, outliers examined, new features added). The columns used for visualization are:
+
+| Variable | Type | Meaning |
+|---|---|---|
+| Survived | Categorical (No / Yes) | Outcome, the main variable of interest |
+| Pclass | Categorical (1st / 2nd / 3rd) | Ticket class, a proxy for wealth |
+| Sex | Categorical | Male or female |
+| Age | Numeric | Age in years (about 20% of values were imputed in Week 1) |
+| Fare | Numeric | Ticket price (heavily right-skewed) |
+| Embarked | Categorical | Port of boarding |
+| Title | Categorical | Mr, Mrs, Miss, Master or Rare, extracted from the passenger name |
+| Deck | Categorical | Deck letter from the cabin number, or "Unknown" |
+
+```{r load}
+df <- read.csv("titanic_clean.csv", stringsAsFactors = FALSE)
+
+df$Survived <- factor(df$Survived, levels = c("No", "Yes"))
+df$Pclass   <- factor(df$Pclass, levels = 1:3, labels = c("1st", "2nd", "3rd"))
+df$Sex      <- factor(df$Sex)
+df$Title    <- factor(df$Title)
+df$Port     <- factor(df$Embarked, levels = c("C", "Q", "S"),
+                      labels = c("Cherbourg", "Queenstown", "Southampton"))
+df$AgeBand  <- cut(df$Age, breaks = c(0, 10, 20, 30, 40, 50, 60, 100),
+                   right = FALSE,
+                   labels = c("0-9", "10-19", "20-29", "30-39", "40-49",
+                              "50-59", "60+"))
+
+dim(df)
+round(100 * prop.table(table(df$Survived)), 1)
+```
+
+# 3. Visualization Design Choices
+
+- **Colour is used consistently.** Orange-red always means "did not survive" and blue always means "survived". Ticket classes and sexes each have their own fixed colours across every chart.
+- **Palette is colour-blind friendly** (Okabe-Ito colours), so the charts remain readable for people with common forms of colour blindness.
+- **Chart titles state the finding**, not just the topic, so a reader can grasp the point before reading any text.
+- **Sample sizes are shown** (`n`) wherever groups are small, because a high percentage from a handful of passengers can mislead.
+- **Chart types are matched to the question:** bars and lollipops for comparing categories, histograms for distributions, scatter plots for relationships, line charts for trends across ordered groups, a heatmap for two-way patterns, box plots for spread, and a mosaic plot for how groups overlap.
+
+# 4. The Visualizations
+
+## Visualization 1: Survival rate by passenger title (lollipop chart)
+
+**Why this chart.** A lollipop chart is a clean alternative to a bar chart when comparing a few categories by a single percentage. The title (Mr, Mrs, Miss, Master) combines sex, age and marital status in one variable, so it summarises "who the person was" better than any single column.
+
+```{r viz1, fig.cap="Visualization 1: Survival rate by passenger title."}
+title_tbl <- df %>%
+  group_by(Title) %>%
+  summarise(n = n(), rate = mean(Survived == "Yes"), .groups = "drop")
+
+ggplot(title_tbl, aes(x = reorder(Title, rate), y = rate)) +
+  geom_segment(aes(xend = Title, y = 0, yend = rate), colour = "grey65") +
+  geom_point(size = 5, colour = col_yes) +
+  geom_text(aes(label = paste0(percent(rate, accuracy = 1), "  (n = ", n, ")")),
+            hjust = -0.25, size = 3.4) +
+  coord_flip() +
+  scale_y_continuous(labels = percent, limits = c(0, 1.05)) +
+  labs(title = "Adult men were far less likely to survive than any other group",
+       subtitle = "Survival rate by title; 'Rare' groups titles such as Dr, Rev and Col",
+       x = NULL, y = "Survival rate")
+```
+
+**What it shows.** Married women (Mrs, 79%) and unmarried women (Miss, 70%) had the highest survival rates, boys (Master, 58%) came next, and adult men (Mr) survived only about 16% of the time. The "Rare" group (35%) has just 23 people, so it should not be over-interpreted. The pattern is consistent with a "women and children first" evacuation.
+
+## Visualization 2: Age distribution by ticket class (histogram)
+
+**Why this chart.** A histogram shows the *shape* of a numeric variable, not just its average. Splitting it by class asks whether the three classes carried different kinds of people.
+
+```{r viz2, fig.cap="Visualization 2: Age distribution within each ticket class.", fig.height=5}
+age_med <- df %>% group_by(Pclass) %>% summarise(med = median(Age), .groups = "drop")
+age_med
+
+ggplot(df, aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "#56B4E9", colour = "white") +
+  geom_vline(data = age_med, aes(xintercept = med),
+             colour = col_no, linewidth = 0.9, linetype = "dashed") +
+  geom_text(data = age_med, aes(x = med, y = Inf, label = paste("median", med)),
+            colour = col_no, hjust = -0.1, vjust = 1.6, size = 3.3) +
+  facet_wrap(~ Pclass, ncol = 1) +
+  labs(title = "Higher classes were older on average",
+       subtitle = "Dashed line marks the median age in each class",
+       x = "Age (years)", y = "Number of passengers")
+```
+
+**What it shows.** The median age falls from 40 in first class to 30 in second and 26 in third. Third class also has the most children. This matters for later charts: class and age are tangled together, so effects seen in one may partly reflect the other. A caution: about 20% of ages were estimated in Week 1 using group medians, which can make bars near those medians slightly taller than reality.
+
+## Visualization 3: Age versus fare, by class and outcome (scatter plot)
+
+**Why this chart.** A scatter plot is the standard way to look at the relationship between two numeric variables. Fare is plotted on a logarithmic scale because a few very expensive tickets would otherwise squash everyone else into the bottom of the chart. Colour adds the survival outcome, and panels separate the classes.
+
+```{r viz3, fig.cap="Visualization 3: Age versus fare, coloured by survival outcome.", fig.height=4.2}
+ggplot(df, aes(x = Age, y = Fare + 1, colour = Survived)) +
+  geom_point(alpha = 0.6, size = 1.6) +
+  scale_y_log10(labels = label_number()) +
+  scale_colour_manual(values = c(No = col_no, Yes = col_yes)) +
+  facet_wrap(~ Pclass) +
+  labs(title = "Fare mirrors class; the cheapest tickets carried the most risk",
+       subtitle = "Each dot is a passenger; vertical axis is log-scaled (Fare + 1)",
+       x = "Age (years)", y = "Fare + 1 (log scale)", colour = "Survived")
+```
+
+```{r viz3-numbers}
+# Numbers behind the commentary
+df %>% filter(Fare > 200) %>%
+  summarise(n = n(), pct_survived = round(100 * mean(Survived == "Yes"), 1))
+df %>% filter(Fare == 0) %>%
+  summarise(n = n(), survivors = sum(Survived == "Yes"))
+```
+
+**What it shows.** The panels confirm that fare tracks class: the median fare is about 60 in first class, 14 in second and 8 in third. Blue dots (survivors) dominate first class, while orange dots (non-survivors) dominate third. Very expensive tickets are mostly blue: the 20 passengers who paid more than 200 survived 70% of the time. The row of dots along the bottom of each panel (Fare + 1 = 1) is the 15 passengers recorded with a fare of exactly 0 (5 first class, 6 second class, 4 third class); only 1 of them survived. That is an unusual pattern worth checking against the source data. They might be crew or guests whose fare was not recorded, but the dataset cannot confirm this.
+
+## Visualization 4: Survival rate across age, for men and women (line chart)
+
+**Why this chart.** A line chart is the right tool for a trend across ordered groups such as age. Drawing one line per sex shows whether age affected the two sexes in the same way. Dot size shows how many passengers each point is based on.
+
+```{r viz4, fig.cap="Visualization 4: Survival rate by age group and sex."}
+sex_age <- df %>%
+  group_by(Sex, AgeBand) %>%
+  summarise(rate = mean(Survived == "Yes"), n = n(), .groups = "drop")
+
+ggplot(sex_age, aes(x = AgeBand, y = rate, colour = Sex, group = Sex)) +
+  geom_line(linewidth = 1) +
+  geom_point(aes(size = n)) +
+  scale_size_area(max_size = 6, name = "Passengers") +
+  scale_colour_manual(values = pal_sex) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(title = "Women did well at every age; among men, only boys did",
+       subtitle = "Dot size shows the number of passengers behind each point",
+       x = "Age group (years)", y = "Survival rate")
+```
+
+**What it shows.** Women's survival stays between 63% and 100% in every age group. For men the story is very different: boys under 10 survived at 58%, but from age 10 onwards male survival sits at only 12% to 22%. So age mattered mainly for males, and mainly at the very young end. The 100% at 60+ for women rests on only 4 passengers (visible as the tiny dot), so it is not reliable.
+
+## Visualization 5: Survival rate by fare group (line chart)
+
+**Why this chart.** To avoid the skew in raw fares, passengers are split into ten equal-sized groups (deciles) from cheapest to most expensive. A line across the deciles then shows whether paying more is linked to better survival odds.
+
+```{r viz5, fig.cap="Visualization 5: Survival rate by fare decile."}
+fare_dec <- df %>%
+  mutate(decile = ntile(Fare, 10)) %>%
+  group_by(decile) %>%
+  summarise(rate = mean(Survived == "Yes"), lo = min(Fare), hi = max(Fare),
+            .groups = "drop")
+fare_dec
+
+ggplot(fare_dec, aes(x = decile, y = rate)) +
+  geom_line(colour = col_yes, linewidth = 1) +
+  geom_point(colour = col_yes, size = 3) +
+  scale_x_continuous(breaks = 1:10, labels = paste0("D", 1:10)) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(title = "Survival rises with fare, but not in a straight line",
+       subtitle = "D1 = cheapest 10% of tickets, D10 = most expensive 10%",
+       x = "Fare decile", y = "Survival rate")
+```
+
+**What it shows.** The cheapest tenth of tickets (up to about 7.6) had only a 13% survival rate, while the most expensive tenth (78 and above) reached 76%. The climb is not smooth: the eighth decile (38%) dips below the seventh (52%). That tells us fare is an imperfect stand-in for class and cabin location, and that group-level noise is present even with roughly 89 passengers per group.
+
+## Visualization 6: Survival by class and age group (heatmap)
+
+**Why this chart.** A heatmap packs a two-way table into a single picture: colour shows the survival rate for each combination of class and age group, and the printed labels give exact values and group sizes. It makes hot spots and cold spots visible at a glance.
+
+```{r viz6, fig.cap="Visualization 6: Survival rate by ticket class and age group.", fig.height=3.6}
+heat <- df %>%
+  group_by(Pclass, AgeBand) %>%
+  summarise(rate = mean(Survived == "Yes"), n = n(), .groups = "drop")
+
+ggplot(heat, aes(x = AgeBand, y = Pclass, fill = rate)) +
+  geom_tile(colour = "white", linewidth = 1) +
+  geom_text(aes(label = paste0(round(100 * rate), "%\nn=", n)), size = 3) +
+  scale_fill_gradient2(low = col_no, mid = "#F7F7F7", high = col_yes,
+                       midpoint = 0.4, limits = c(0, 1), breaks = c(0, 0.5, 1), labels = percent,
+                       name = "Survival rate") +
+  scale_y_discrete(limits = rev) +
+  labs(title = "Third class was the coldest zone at almost every age",
+       subtitle = "Each tile shows the survival rate and number of passengers",
+       x = "Age group (years)", y = "Ticket class")
+```
+
+**What it shows.** In third class, survival stays below 46% in every age group and drops to 6% for ages 40 to 49 (n = 34) and 0% for ages 50 to 59 (n = 6). In first class most groups are between 53% and 83%, with the oldest group (60+) the exception at 29%. Second-class children under 10 all survived (n = 17). Small tiles, such as first-class children under 10 (n = 3), are shown with their counts precisely so that they are not over-read.
+
+## Visualization 7: Why the boarding port is misleading (two-panel bar chart)
+
+**Why this chart.** Passengers boarded at three ports, and survival differed by port. Placing a survival chart next to a class-mix chart tests whether the port itself matters or whether it is simply standing in for something else.
+
+```{r viz7, fig.cap="Visualization 7: Survival rate and class mix by port of boarding.", fig.height=3.8}
+p_a <- df %>%
+  group_by(Port) %>%
+  summarise(rate = mean(Survived == "Yes"), n = n(), .groups = "drop") %>%
+  ggplot(aes(x = Port, y = rate)) +
+  geom_col(fill = col_yes, width = 0.6) +
+  geom_text(aes(label = paste0(percent(rate, accuracy = 1), "\n(n = ", n, ")")),
+            vjust = -0.2, size = 3.2) +
+  scale_y_continuous(labels = percent, limits = c(0, 0.7)) +
+  labs(title = "Survival rate", x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(size = 8))
+
+p_b <- ggplot(df, aes(x = Port, fill = Pclass)) +
+  geom_bar(position = "fill", width = 0.6) +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = pal_class) +
+  labs(title = "Class mix", x = NULL, y = NULL, fill = "Class") +
+  theme(axis.text.x = element_text(size = 8))
+
+p_a + p_b + plot_annotation(
+  title = "Cherbourg survived more, partly because more were first class")
+```
+
+```{r viz7-numbers}
+# Class mix by port (row %), and survival within class by port (%)
+round(100 * prop.table(table(df$Port, df$Pclass), 1), 1)
+round(100 * tapply(df$Survived == "Yes", list(df$Port, df$Pclass), mean), 1)
+```
+
+**What it shows.** Cherbourg had the highest survival rate (55%) against 39% at Queenstown and 34% at Southampton. But about half of Cherbourg's passengers were first class (51%), compared with 20% at Southampton, so part of the gap comes from class mix. It is not the whole explanation: even within the same class, Cherbourg did better than Southampton (69% versus 59% in first class, 38% versus 19% in third). The Queenstown first-class figures are based on only two passengers and should be ignored. This chart is a good reminder that a simple comparison can hide a third variable.
+
+## Visualization 8: Survival rate by deck (bar chart)
+
+**Why this chart.** In Week 1, most cabin numbers were missing, so the dataset records "Unknown" for 687 passengers. A bar chart for each deck makes it easy to see whether having a recorded cabin, and which deck, is associated with survival.
+
+```{r viz8, fig.cap="Visualization 8: Survival rate by deck (grey = no cabin recorded)."}
+deck_tbl <- df %>%
+  filter(Deck != "T") %>%                       # only 1 passenger, omitted
+  mutate(Deck = factor(Deck, levels = c(LETTERS[1:7], "Unknown"))) %>%
+  group_by(Deck) %>%
+  summarise(rate = mean(Survived == "Yes"), n = n(), .groups = "drop")
+
+ggplot(deck_tbl, aes(x = Deck, y = rate, fill = Deck == "Unknown")) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = paste0(percent(rate, accuracy = 1), "\nn=", n)),
+            vjust = -0.2, size = 3) +
+  scale_fill_manual(values = c(`TRUE` = "grey60", `FALSE` = col_yes)) +
+  scale_y_continuous(labels = percent, limits = c(0, 0.95)) +
+  labs(title = "Passengers with no recorded cabin fared much worse",
+       subtitle = "Blue = deck known; grey = no cabin recorded (mostly 2nd/3rd class)",
+       x = "Deck", y = "Survival rate")
+```
+
+**What it shows.** Passengers with no recorded cabin survived 30% of the time (n = 687). Those on decks B, D and E survived about 75% of the time. Deck A (47%) and deck G (50%) are based on only 15 and 4 passengers. As Week 1 showed, a recorded cabin is largely a marker of first class (82% of first-class passengers had one versus 2% in third class), so this chart mostly restates the class effect rather than showing a separate "deck effect".
+
+## Visualization 9: Age spread by class and sex (lattice box plot)
+
+**Why this chart.** Box plots summarise a distribution with five numbers (minimum, quartiles, median and maximum) and flag unusual values. This one uses the **lattice** package, which draws the two sexes side by side in matching panels, to show the same data seen in Visualization 2 from a different angle.
+
+```{r viz9, fig.cap="Visualization 9: Age distribution by class, split by sex (lattice).", fig.height=3.8}
+bwplot(Age ~ Pclass | Sex, data = df,
+       xlab = "Ticket class", ylab = "Age (years)",
+       main = "Age distribution by class and sex",
+       par.settings = list(box.rectangle = list(col = col_yes),
+                           box.umbrella  = list(col = col_yes),
+                           plot.symbol   = list(col = col_no, pch = 16, cex = 0.6)),
+       layout = c(2, 1))
+
+aggregate(Age ~ Pclass + Sex, data = df, FUN = median)
+```
+
+**What it shows.** Within every class, men were older than women: the median age is 40 for first-class men versus 35 for first-class women, 31 versus 28 in second class, and 26 versus 18 in third class. Third-class women are the youngest group of all (median 18). The dots beyond the whiskers are unusually old passengers, such as men aged 80 in first class, 70 in second class and 74 in third class. These are real values, not errors, which is why they were kept in Week 1. As with Visualization 2, some ages are estimates.
+
+## Visualization 10: How class, sex and survival overlap (base R mosaic plot)
+
+**Why this chart.** A mosaic plot, drawn here with base R, makes the area of each tile proportional to the number of passengers. This lets one picture show both *how many* people were in each group and *how they fared*, which a normal bar chart cannot do for three variables at once.
+
+```{r viz10, fig.cap="Visualization 10: Mosaic plot of class, sex and survival (base R).", fig.height=4.4}
+par(mar = c(2, 3, 3, 1))
+mosaicplot(Sex ~ Pclass + Survived, data = df, dir = c("v", "v", "h"),
+           off = c(14, 4, 4), color = c(col_no, col_yes),
+           main = "Tile area = number of passengers",
+           xlab = "", ylab = "", las = 1, cex.axis = 0.9)
+mtext("Orange = did not survive  |  Blue = survived", side = 1, line = 0.5)
+
+ftable(Sex ~ Pclass + Survived, data = df)
+```
+
+**What it shows.** The biggest block on the chart is third-class men (347 passengers, 39% of everyone aboard), and it is mostly orange: only 47 of them survived (14%). By contrast, nearly all first-class and second-class women survived (91 of 94 and 70 of 76), so those columns are almost entirely blue. Third-class women are the one group where the outcome was a coin flip (72 survived, 72 did not). First-class men (37% survived) fared much better than second-class (16%) and third-class men (14%), so class mattered for men even though sex mattered more overall.
+
+# 5. Summary of Insights
+
+| # | Insight | Evidence (figure) |
+|---|---|---|
+| 1 | Adult men had by far the lowest survival rate (16%), women the highest (70% to 79%) | Visualization 1, 4 |
+| 2 | Boys under 10 survived at 58%, but men aged 10 and over only at 12% to 22% | Visualization 4 |
+| 3 | Higher classes were older; third class had the most children | Visualization 2, 9 |
+| 4 | Survival rises with fare (13% in the cheapest tenth, 76% in the dearest) but unevenly | Visualization 5 |
+| 5 | Third class had low survival at almost every age, first class generally high | Visualization 6, 10 |
+| 6 | The port-of-boarding gap is partly explained by class mix, but not entirely | Visualization 7 |
+| 7 | "No recorded cabin" is mostly a stand-in for lower class | Visualization 8 |
+
+# 6. Limitations and Honest Caveats
+
+- **Correlation is not causation.** Charts show associations. Class, sex, fare, cabin and port are tangled together, so no single chart isolates one cause.
+- **Small groups.** Several percentages rest on very few passengers (shown as `n` on the charts). They should be read as hints only.
+- **Imputed ages.** About 20% of ages were estimated in Week 1. Charts using age (2, 4, 6, 9) inherit this uncertainty.
+- **Static charts.** A Word document cannot hold interactive charts. A natural next step would be interactive versions (for example, with the `plotly` or `shiny` packages) so that readers can filter and hover.
+- **Historical data.** The results describe this specific event and should not be generalised.
+
+# Appendix: Session Information
+
+```{r session}
+sessionInfo()
+```
